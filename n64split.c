@@ -126,6 +126,48 @@ static void gzip_decode_file(char *gzfilename, int offset, char *binfilename)
    fclose(fout);
 }
 
+static void rz_decode_file(char *rzfilename, int offset, char *binfilename)
+{
+#define CHUNK 0x4000
+      FILE *file;
+      FILE *fout;
+      z_stream strm = {0};
+      unsigned char in[CHUNK];
+      unsigned char out[CHUNK];
+
+      // TODO: add some error checking
+      strm.zalloc = Z_NULL;
+      strm.zfree = Z_NULL;
+      strm.opaque = Z_NULL;
+      strm.avail_in = 0;
+      inflateInit2(&strm, -15);
+
+      file = fopen(rzfilename, "rb");
+      fout = fopen(binfilename, "wb");
+      fseek(file, offset + 2, SEEK_SET);
+      while (1)
+      {
+            int bytes_read;
+            bytes_read = fread(in, sizeof(char), sizeof(in), file);
+            strm.avail_in = bytes_read;
+            strm.next_in = in;
+            do
+            {
+                  strm.avail_out = CHUNK;
+                  strm.next_out = out;
+                  inflate(&strm, Z_NO_FLUSH);
+                  fwrite(out, sizeof(char), CHUNK - strm.avail_out, fout);
+            } while (strm.avail_out == 0);
+            if (feof(file))
+            {
+                  inflateEnd(&strm);
+                  break;
+            }
+      }
+      fclose(file);
+      fclose(fout);
+}
+
 static int config_section_lookup(rom_config *config, unsigned int addr, char *label, int is_end)
 {
    int i;
@@ -782,6 +824,129 @@ char *terrain2str(unsigned type)
    return retval;
 }
 
+void file2language(char *binfilename, unsigned int binoffset, char *asmfilename, char *name)
+{
+      unsigned char *data;
+      FILE *flanguage;
+      long in_size;
+      unsigned offset;
+      unsigned i;
+
+      flanguage = fopen(asmfilename, "w");
+      if (flanguage == NULL) {
+            ERROR("Error opening \"%s\" for writing\n", asmfilename);
+            exit(EXIT_FAILURE);
+      }
+
+      in_size = read_file(binfilename, &data);
+
+      if (in_size <= 0) {
+            ERROR("Error reading input file \"%s\"\n", binfilename);
+            exit(EXIT_FAILURE);
+      }
+
+      offset = binoffset;
+
+      //check for empty file
+      if (in_size > 32) {
+            unsigned stringstart = read_u32_be(data);
+            //check if file is LlenE or LlenJ
+            if (stringstart == 0x00000000) {
+                  INFO("LlenE hack\n");
+                  stringstart = read_u32_be(&data[offset + 0x20]);
+            }
+            //read ptr table
+            int strptrs[0xFFF];
+            unsigned stringcount = (stringstart / 0x4);
+
+            for (i = 0; (i < stringcount); i++) {
+                  strptrs[i] = read_u32_be(&data[offset + (i * 0x4)]);
+            }
+            //write header
+
+            fprintf(flanguage, "static char %s_strings[] = {\n", name);
+            //process strings
+            unsigned curoffset;
+            unsigned nextoffset;
+            for (i = 0; (i < stringcount); i++) {
+                  curoffset = strptrs[i];
+                  nextoffset = strptrs[i + 1];
+                  if (curoffset == 0) {
+                        nextoffset = 0;
+                  }
+
+                  if (curoffset > 0 && nextoffset == 0) {
+                        int count;
+                        for (count = i + 2; count < stringcount; count++) {
+                              if (count + 1 < stringcount && strptrs[count + 1] != 0) {
+                                    nextoffset = strptrs[count + 1];
+                              }
+                              else {
+                                    nextoffset = in_size;
+                              }
+                        }
+                  }
+
+                  if (curoffset == 0) {
+                        //do we need a comma?
+                        if (i < stringcount) {
+                              fprintf(flanguage, "\"\",\n");
+                        }
+                        else {
+                              fprintf(flanguage, "\"\"\n");
+                        }
+                  }
+                  else {
+                        //process escape chars
+                        char Lstring[1024] = {0};
+                        sprintf(Lstring, "%s", &data[curoffset]);
+
+                        fprintf(flanguage, "\"");
+                        for (int letter = 0; letter < sizeof(Lstring); letter++) {
+                              if (Lstring[letter] == 0x0A) {
+                                    fprintf(flanguage, "\\n");
+                              }
+                              else if (Lstring[letter] == 0x5C) {
+                                    fprintf(flanguage, "\\\"");
+                              }
+                              else if (Lstring[letter] == 0x3f) {
+                                    fprintf(flanguage, "\\\?");
+                              }
+                              else if (Lstring[letter] == 0x22) {
+                                    fprintf(flanguage, "\\\"");
+                              }
+                              else if (Lstring[letter] == 0x27) {
+                                    fprintf(flanguage, "\\\'");
+                              }
+                              else if (Lstring[letter] == 0x09) {
+                                    fprintf(flanguage, "\\\t");
+                              }
+                              else if (Lstring[letter] == 0x00) {
+                                    fprintf(flanguage, "");
+                              }
+                              else {
+                                    fprintf(flanguage, "%c", Lstring[letter]);
+                              }
+                        }
+                        //do we need a comma?
+                        if (i < stringcount) {
+                              fprintf(flanguage, "\",\n");
+                        }
+                        else {
+                              fprintf(flanguage, "\"\n");
+                        }
+                  }
+            }
+            //write footer
+            fprintf(flanguage, "}\n");
+      }
+      else {
+            //handle empty file
+      }
+      fclose(flanguage);
+      free(data);
+}
+
 void collision2obj(char *binfilename, unsigned int binoffset, char *objfilename, char *name, float scale)
 {
    unsigned char *data;
@@ -876,6 +1041,7 @@ static void split_file(unsigned char *data, unsigned int length, arg_config *arg
 {
 #define BIN_SUBDIR      "bin"
 #define MIO0_SUBDIR     "bin"
+#define OBSEG_SUBDIR "obseg"
 #define TEXTURE_SUBDIR  "textures"
 #define GEO_SUBDIR      "geo"
 #define LEVEL_SUBDIR    "levels"
@@ -884,6 +1050,7 @@ static void split_file(unsigned char *data, unsigned int length, arg_config *arg
    char makefile_name[FILENAME_MAX];
    char bin_dir[FILENAME_MAX];
    char mio0_dir[FILENAME_MAX];
+   char obseg_dir[FILENAME_MAX];
    char texture_dir[FILENAME_MAX];
    char geo_dir[FILENAME_MAX];
    char level_dir[FILENAME_MAX];
@@ -911,6 +1078,7 @@ static void split_file(unsigned char *data, unsigned int length, arg_config *arg
    sprintf(makefile_name, "%s/Makefile.split", args->output_dir);
    sprintf(bin_dir, "%s/%s", args->output_dir, BIN_SUBDIR);
    sprintf(mio0_dir, "%s/%s", args->output_dir, MIO0_SUBDIR);
+   sprintf(obseg_dir, "%s/%s", args->output_dir, OBSEG_SUBDIR);
    sprintf(texture_dir, "%s/%s", args->output_dir, TEXTURE_SUBDIR);
    sprintf(geo_dir, "%s/%s", args->output_dir, GEO_SUBDIR);
    sprintf(level_dir, "%s/%s", args->output_dir, LEVEL_SUBDIR);
@@ -919,6 +1087,7 @@ static void split_file(unsigned char *data, unsigned int length, arg_config *arg
    make_dir(args->output_dir);
    make_dir(bin_dir);
    make_dir(mio0_dir);
+   make_dir(obseg_dir);
    make_dir(texture_dir);
    make_dir(geo_dir);
    make_dir(level_dir);
@@ -1008,6 +1177,55 @@ static void split_file(unsigned char *data, unsigned int length, arg_config *arg
             fprintf(fasm, "\"        # country\n");
             fprintf(fasm, ".byte  0x%02X       # version\n\n", data[sec->start + 0x3F]);
             break;
+         case TYPE_ASCII:
+            INFO("Ascii string: %X-%X\n", sec->start, sec->end);
+            if (sec->label == NULL || sec->label[0] == '\0') {
+                  sprintf(start_label, "str_%06X", sec->vaddr);
+            }
+            else {
+                  strcpy(start_label, sec->label);
+            }
+            fprintf(fasm, "%s: #0x%X\n", start_label, (sec->start + 0x7F420D90));
+
+            char assemblystring[1024] = {0};
+            sprintf(assemblystring, "%s", &data[sec->start]);
+            fprintf(fasm, ".asciiz \"");
+            for (int letter = 0; letter < sizeof(assemblystring); letter++) {
+                  //INFO("letter[%d]=%c(%X)\n", letter, Lstring[letter], Lstring[letter]);
+                  if (assemblystring[letter] == 0x0A) {
+                        fprintf(fasm, "\\n");
+                  }
+                  else if (assemblystring[letter] == 0x5C) {
+                        fprintf(fasm, "\\\"");
+                  }
+                  else if (assemblystring[letter] == 0x3f) {
+                        fprintf(fasm, "\\\?");
+                  }
+                  else if (assemblystring[letter] == 0x22) {
+                        fprintf(fasm, "\\\"");
+                  }
+                  else if (assemblystring[letter] == 0x27) {
+                        fprintf(fasm, "\\\'");
+                  }
+                  else if (assemblystring[letter] == 0x09) {
+                        fprintf(fasm, "\\\t");
+                  }
+                  else if (assemblystring[letter] == 0x1B) {
+                        fprintf(fasm, "\\x1B");
+                  }
+                  else if (assemblystring[letter] == 0x80) {
+                        fprintf(fasm, "\\x80");
+                  }
+                  else if (assemblystring[letter] == 0x00) {
+                        fprintf(fasm, "");
+                  }
+                  else {
+                        fprintf(fasm, "%c", assemblystring[letter]);
+                  }
+            }
+
+            fprintf(fasm, "\"\n\n");
+            break;
          case TYPE_BIN:
             if (sec->label == NULL || sec->label[0] == '\0') {
                sprintf(outfilename, "%s/%s.%06X.bin", BIN_SUBDIR, config->basename, sec->start);
@@ -1028,6 +1246,8 @@ static void split_file(unsigned char *data, unsigned int length, arg_config *arg
          case TYPE_BLAST:
          case TYPE_MIO0:
          case TYPE_GZIP:
+         case TYPE_RZ:
+         case TYPE_GE_L:
          case TYPE_SM64_GEO:
             // fill previous geometry and MIO0 blocks
             fprintf(fasm, ".space 0x%05x, 0x01 # %s\n", sec->end - sec->start, sec->label);
@@ -1147,8 +1367,47 @@ static void split_file(unsigned char *data, unsigned int length, arg_config *arg
             strbuf_sprintf(&makeheader_level, " \\\n$(GEO_DIR)/%s", geofilename);
             break;
          }
+         case TYPE_GE_L:
+         {
+            char binfilename[FILENAME_MAX];
+            char lasmfilename[FILENAME_MAX];
+            char rzfilename[FILENAME_MAX];
+            char extension[8] = {0};
+            unsigned char *lut;
+
+            INFO("Section GE_L: %s %X-%X\n", sec->label, sec->start, sec->end);
+            strcpy(extension, "rz");
+
+            if (sec->label == NULL || sec->label[0] == '\0')
+            {
+                  sprintf(start_label, "L%06X", sec->start);
+            }
+            else
+            {
+                  strcpy(start_label, sec->label);
+            }
+            sprintf(outfilename, "%s.%s", start_label, extension);
+            sprintf(binfilename, "%s/%s.bin", obseg_dir, start_label);
+            sprintf(rzfilename, "%s/%s", obseg_dir, outfilename);
+            sprintf(lasmfilename, "%s/%s.s", obseg_dir, start_label);
+            write_file(rzfilename, &data[sec->start], sec->end - sec->start);
+
+            fprintf(fasm, "\n.align 4, 0x01\n");
+            fprintf(fasm, ".global %s\n", start_label);
+            fprintf(fasm, "%s:\n", start_label);
+            fprintf(fasm, ".incbin \"%s/%s\"\n", OBSEG_SUBDIR, outfilename);
+            fprintf(fasm, "%s_end:\n", start_label);
+
+            // append to Makefile
+            //strbuf_sprintf(&makeheader_obseg, " \\\n$(OBSEG_DIR)/%s", outfilename);
+
+            rz_decode_file(rzfilename, 0, binfilename);
+            file2language(binfilename, 0, lasmfilename, start_label);
+            break;
+         }
          case TYPE_BLAST:
          case TYPE_GZIP:
+         case TYPE_RZ:
          case TYPE_MIO0:
          {
             char binfilename[FILENAME_MAX];
@@ -1166,6 +1425,10 @@ static void split_file(unsigned char *data, unsigned int length, arg_config *arg
                case TYPE_GZIP:
                   INFO("Section GZIP: %s %X-%X\n", sec->label, sec->start, sec->end);
                   strcpy(extension, "gz");
+                  break;
+               case TYPE_RZ:
+                  INFO("Section RZ: %s %X-%X\n", sec->label, sec->start, sec->end);
+                  strcpy(extension, "rz");
                   break;
                default:
                   break;
@@ -1205,6 +1468,9 @@ static void split_file(unsigned char *data, unsigned int length, arg_config *arg
                   break;
                case TYPE_GZIP:
                   gzip_decode_file(mio0filename, 0, binfilename);
+                  break;
+               case TYPE_RZ:
+                  rz_decode_file(mio0filename, 0, binfilename);
                   break;
                default:
                   break;

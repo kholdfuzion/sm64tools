@@ -18,3 +18,8 @@
 
 # Executables
 *.exe
+*.rom
+mio0.d
+mipsdisasm.d
+n64graphics.d
+sm64walk.d

@@ -18,7 +18,10 @@ static const section_entry section_table[] = {
    {"bin",        TYPE_BIN},
    {"blast",      TYPE_BLAST},
    {"gzip",       TYPE_GZIP},
+   {"rz",         TYPE_RZ},
+   {"ge_l",       TYPE_GE_L},
    {"header",     TYPE_HEADER},
+   {"ascii",      TYPE_ASCII},
    {"instrset",   TYPE_INSTRUMENT_SET},
    {"m64",        TYPE_M64},
    {"sfx.ctl",    TYPE_SFX_CTL},
@@ -153,6 +156,7 @@ void load_section_data(split_section *section, yaml_document_t *doc, yaml_node_t
       case TYPE_BLAST:
       case TYPE_MIO0:
       case TYPE_GZIP:
+      case TYPE_RZ:
       {
          // parse texture
          split_section *tex = calloc(count, sizeof(*tex));
@@ -221,6 +225,7 @@ void load_section(split_section *section, yaml_document_t *doc, yaml_node_t *nod
          case TYPE_ASM:
          case TYPE_BIN:
          case TYPE_HEADER:
+         case TYPE_ASCII:
          case TYPE_M64:
          case TYPE_SM64_GEO:
          case TYPE_SM64_LEVEL:
@@ -241,6 +246,8 @@ void load_section(split_section *section, yaml_document_t *doc, yaml_node_t *nod
          case TYPE_BLAST:
          case TYPE_MIO0:
          case TYPE_GZIP:
+         case TYPE_RZ:
+         case TYPE_GE_L:
          case TYPE_SM64_BEHAVIOR:
             if (count < 4 || count > 5) {
                ERROR("Error: " SIZE_T_FORMAT " - expected 4-5 fields for section\n", node->start_mark.line);
@@ -480,6 +487,7 @@ void config_free(rom_config *config)
             switch (config->sections[i].type) {
                case TYPE_BLAST:
                case TYPE_GZIP:
+               case TYPE_RZ:
                case TYPE_MIO0:
                case TYPE_SM64_BEHAVIOR:
                   if (config->sections[i].child_count) {
@@ -524,6 +532,7 @@ void config_print(const rom_config *config)
             case TYPE_BLAST:
             case TYPE_MIO0:
             case TYPE_GZIP:
+            case TYPE_RZ:
             {
                split_section *textures = s[i].children;
                for (j = 0; j < s[i].child_count; j++) {
