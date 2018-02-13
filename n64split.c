@@ -660,7 +660,6 @@ static void parse_sound_banks(FILE *out, unsigned char *data, split_section *sec
    INFO("Successfully exported sounds:\n");
    INFO("  # of banks: %u\n", sound_banks.bank_count);
    INFO("  # of sounds: %u\n", sound_count);
-
 }
 
 static void generate_ld_script(arg_config *args, rom_config *config)
@@ -1632,7 +1631,7 @@ int main(int argc, char *argv[])
          unsigned int start = config.sections[i].start;
          unsigned int end = config.sections[i].end;
          unsigned int vaddr = config.sections[i].vaddr;
-         if (end <= len) {
+         if (end <= (unsigned int)len) {
             mipsdisasm_pass1(data, start, end - start, vaddr, state);
          } else {
             ERROR("Trying to disassemble past end of file (%X > %X)\n", end, (unsigned int)len);

@@ -52,7 +52,9 @@
 #if defined(_MSC_VER) || defined(__MINGW32__)
   #include <direct.h>
   #define mkdir(DIR_, PERM_) _mkdir(DIR_)
-  #define strcasecmp(A, B) stricmp(A, B)
+  #ifndef strcasecmp
+    #define strcasecmp(A, B) stricmp(A, B)
+  #endif
 #endif
 
 // typedefs
@@ -75,6 +77,9 @@ extern int g_verbosity;
 
 // convert two bytes in big-endian to signed int
 int read_s16_be(unsigned char *buf);
+
+// convert four bytes in big-endian to float
+float read_f32_be(unsigned char *buf);
 
 // determine if value is power of 2
 // returns 1 if val is power of 2, 0 otherwise
